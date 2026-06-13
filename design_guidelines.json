@@ -1,0 +1,99 @@
+{
+  "theme": "dark",
+  "archetype": "Swiss & High-Contrast (Archetype 4 adapted for Dark Mode)",
+  "design_philosophy": "A command-center, technical-first interface for B2B sales reps. Avoids the 'bubbly' chat interface in favor of a stark, editorial 'terminal log' layout. High contrast, mono-spaced metadata, and strict bento grids for tool outputs.",
+  "colors": {
+    "background": "#09090B",
+    "surface": "#121214",
+    "surface_glass": "rgba(9, 9, 11, 0.8)",
+    "border": "rgba(255, 255, 255, 0.1)",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#A1A1AA",
+    "accent_primary": "#FFCC00",
+    "accent_secondary": "#FF5500",
+    "badge_model": {
+      "bg": "rgba(255, 255, 255, 0.05)",
+      "text": "#A1A1AA",
+      "border": "rgba(255, 255, 255, 0.1)"
+    },
+    "badge_tool": {
+      "bg": "rgba(255, 85, 0, 0.1)",
+      "text": "#FF5500",
+      "border": "rgba(255, 85, 0, 0.2)"
+    },
+    "badge_category": {
+      "bg": "rgba(0, 194, 255, 0.1)",
+      "text": "#00C2FF",
+      "border": "rgba(0, 194, 255, 0.2)"
+    }
+  },
+  "typography": {
+    "heading_font": "Chivo",
+    "body_font": "IBM Plex Sans",
+    "mono_font": "JetBrains Mono",
+    "user_message": "text-2xl sm:text-3xl font-light tracking-tight text-white",
+    "ai_body": "text-base leading-relaxed text-zinc-300",
+    "metadata_text": "text-[10px] sm:text-xs font-mono uppercase tracking-[0.1em]"
+  },
+  "layout": {
+    "chat_container": "max-w-4xl mx-auto w-full px-4 sm:px-8 pb-40 pt-12",
+    "message_spacing": "gap-12 sm:gap-16",
+    "input_area": "fixed bottom-0 left-0 right-0 bg-[#09090B]/80 backdrop-blur-xl border-t border-white/10 p-4 sm:p-6 z-50",
+    "border_radius": "rounded-sm"
+  },
+  "components": {
+    "ChatThread": {
+      "style": "Vertical log format. No chat bubbles. Use generous vertical spacing (gap-12) between exchanges.",
+      "testid": "chat-thread"
+    },
+    "UserMessage": {
+      "style": "Massive text (text-3xl font-light) aligned left, taking up a maximum of 80% width. No background color.",
+      "testid": "user-message"
+    },
+    "AIResponse": {
+      "style": "Block layout containing metadata header, body text, and any tool-specific cards (like email drafts).",
+      "testid": "ai-response"
+    },
+    "MetadataBadge": {
+      "style": "Sharp corners (rounded-none or rounded-sm), monospaced text, 1px solid borders. Colored based on context (Tool=Orange, Category=Cyan).",
+      "testid": "metadata-badge"
+    },
+    "ActionCard_Gmail": {
+      "style": "Rectangular bento card for email drafts. Sharp borders. The 'Send via Gmail' button should use hover:bg-red-500/10 border border-red-500/20 text-red-400 rounded-sm w-full sm:w-auto.",
+      "testid": "send-gmail-button"
+    },
+    "InputBar": {
+      "style": "Deep surface bg (#121214), 1px border. Completely transparent inner input. Subtle glow on focus-within. Contains submit button and tool icons.",
+      "testid": "chat-input-bar"
+    },
+    "QuickActions": {
+      "style": "Horizontal flex row of chips positioned directly above the input bar. Sharp borders (border-white/15), dim text (text-zinc-400), brightens on hover.",
+      "testid": "quick-action-chip"
+    },
+    "TypingIndicator": {
+      "style": "Monospaced text 'PitchRoute is synthesizing...' with a blinking block cursor (animate-pulse on a solid w-2 h-4 rectangle), avoiding generic bouncing dots.",
+      "testid": "typing-indicator"
+    }
+  },
+  "motion": {
+    "hover_state": "transition-all duration-200 ease-out",
+    "entrance": "animate-in slide-in-from-bottom-4 fade-in duration-300"
+  },
+  "media": {
+    "user_avatar": "https://images.unsplash.com/photo-1765776830139-72b2184dae5a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBtYW4lMjBwb3J0cmFpdCUyMGRhcmslMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4MTMzNjU3N3ww&ixlib=rb-4.1.0&q=85",
+    "ai_avatar": "https://images.unsplash.com/photo-1517241034903-9a4c3ab12f00?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGRhcmslMjBnZW9tZXRyaWMlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4MTIyODc2NHww&ixlib=rb-4.1.0&q=85",
+    "description": "User avatar is a professional portrait. AI avatar is a stark, black-and-white abstract geometric texture to represent an AI system without using a cliché robot."
+  },
+  "icons_library": "lucide-react",
+  "instructions_to_main_agent": [
+    "Build the PitchRoute chat UI using standard Shadcn components (ScrollArea, Input, Button, Badge) but heavily override their default Vercel-like styles to match the Archetype 4 Swiss Dark theme.",
+    "Banish chat bubbles. Do not use rounded colored backgrounds for messages. Use an editorial log layout where messages flow vertically like a document, separated by massive generous padding (py-8 or py-12).",
+    "User messages should use the heading font (Chivo) and be distinctly large (text-2xl or text-3xl) and font-light to create visual tension.",
+    "AI responses must always start with a horizontal bento-row of Metadata Badges (Model, Tool, Category) using JetBrains Mono text and respective border colors before showing the body text.",
+    "For the 'Send via Gmail' feature, render the email draft inside a dedicated bordered card (bg-[#121214]) with a prominent Gmail action button at the bottom.",
+    "Implement the 'TypingIndicator' as a technical terminal-style string ('PitchRoute is synthesizing...') rather than three bouncing dots.",
+    "The input bar should be housed in a sticky glassmorphic footer spanning the bottom of the screen, with Quick Action chips positioned horizontally just above the input field.",
+    "Ensure ALL interactive elements have data-testid attributes (e.g., data-testid='chat-input', data-testid='send-gmail-button', data-testid='metadata-badge').",
+    "Ensure all fonts (Chivo, IBM Plex Sans, JetBrains Mono) are imported from Google Fonts in index.css or App.css."
+  ]
+}
