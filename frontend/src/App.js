@@ -2,9 +2,9 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import "@/App.css";
 import axios from "axios";
 import { CHAT } from "@/constants/testIds";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import ReactMarkdown from "react-markdown";
 import {
   Send,
@@ -20,6 +20,16 @@ import {
   Wrench,
   FolderOpen,
   BarChart3,
+  ChevronRight,
+  CheckCircle2,
+  Database,
+  Search,
+  PenLine,
+  Copy,
+  Check,
+  PanelRightOpen,
+  PanelRightClose,
+  CircleDot,
 } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -32,8 +42,39 @@ const QUICK_ACTIONS = [
   { label: "Find leads", icon: Users, prompt: "Find similar leads in the SaaS industry" },
 ];
 
+const TOOL_ICONS = {
+  generate_cold_email: PenLine,
+  review_email: FileText,
+  lookup_prospect: UserSearch,
+  get_deal_notes: Database,
+  find_similar_leads: Search,
+  none: CircleDot,
+};
+
+const TOOL_LABELS = {
+  generate_cold_email: "Generate Cold Email",
+  review_email: "Review Email",
+  lookup_prospect: "Lookup Prospect",
+  get_deal_notes: "Get Deal Notes",
+  find_similar_leads: "Find Similar Leads",
+  none: "General Response",
+};
+
+const CATEGORY_LABELS = {
+  cold_email_draft: "Cold Email Draft",
+  email_review: "Email Review",
+  prospect_lookup: "Prospect Lookup",
+  deal_lookup: "Deal Lookup",
+  lead_gen: "Lead Generation",
+  general: "General",
+};
+
 function MetadataBadges({ metadata }) {
   if (!metadata) return null;
+  const tools = metadata.tool_used?.split(" → ") || ["none"];
+  const categories = metadata.category?.split(" → ") || ["general"];
+  const isMultiStep = tools.length > 1;
+
   return (
     <div className="flex flex-wrap gap-2 mb-4" data-testid={CHAT.metadataBadge}>
       <span className="badge-model inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] sm:text-xs font-mono uppercase tracking-[0.1em] rounded-sm">
@@ -42,20 +83,38 @@ function MetadataBadges({ metadata }) {
       </span>
       <span className="badge-tool inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] sm:text-xs font-mono uppercase tracking-[0.1em] rounded-sm">
         <Wrench className="w-3 h-3" />
-        {metadata.tool_used}
+        {isMultiStep ? `${tools.length} STEPS` : tools[0]?.toUpperCase()}
       </span>
       <span className="badge-category inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] sm:text-xs font-mono uppercase tracking-[0.1em] rounded-sm">
         <FolderOpen className="w-3 h-3" />
-        {metadata.category}
+        {categories[categories.length - 1]?.toUpperCase()}
       </span>
     </div>
   );
 }
 
 function EmailDraftCard({ emailDraft }) {
+  const [copied, setCopied] = useState(false);
+
   if (!emailDraft) return null;
 
-  const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=&su=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
+  const handleSendGmail = () => {
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=&su=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
+    // Use window.open to bypass iframe restrictions
+    const w = window.open(gmailUrl, "_blank", "noopener,noreferrer");
+    if (!w) {
+      // Fallback: copy the URL and let user paste
+      navigator.clipboard.writeText(gmailUrl);
+      alert("Pop-up blocked. Gmail URL copied to clipboard — paste it in a new tab.");
+    }
+  };
+
+  const handleCopyDraft = () => {
+    const text = `Subject: ${emailDraft.subject}\n\n${emailDraft.body}`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="email-card rounded-sm p-4 sm:p-5 mt-4" data-testid="email-draft-card">
@@ -72,16 +131,24 @@ function EmailDraftCard({ emailDraft }) {
         <span className="text-xs text-zinc-500 font-mono uppercase tracking-wider">Body</span>
         <p className="text-sm text-zinc-300 mt-1 whitespace-pre-wrap leading-relaxed">{emailDraft.body}</p>
       </div>
-      <a
-        href={gmailUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        data-testid={CHAT.sendGmailButton}
-        className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-sm border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-all duration-200"
-      >
-        <ExternalLink className="w-3.5 h-3.5" />
-        Send via Gmail
-      </a>
+      <div className="flex gap-2">
+        <button
+          onClick={handleSendGmail}
+          data-testid={CHAT.sendGmailButton}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-sm border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-all duration-200"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+          Send via Gmail
+        </button>
+        <button
+          onClick={handleCopyDraft}
+          data-testid="copy-draft-button"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-sm border border-white/10 text-zinc-400 hover:bg-white/5 transition-all duration-200"
+        >
+          {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+          {copied ? "Copied" : "Copy Draft"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -116,6 +183,146 @@ function AIResponse({ content, metadata, emailDraft }) {
       </div>
       <EmailDraftCard emailDraft={emailDraft} />
     </div>
+  );
+}
+
+/* --- Tool Execution Sidebar --- */
+function ToolSidebar({ messages, isOpen, onToggle }) {
+  // Get the latest assistant message with metadata
+  const assistantMessages = messages.filter((m) => m.role === "assistant" && m.metadata);
+  const latestMsg = assistantMessages[assistantMessages.length - 1];
+
+  if (!latestMsg?.metadata) return null;
+
+  const meta = latestMsg.metadata;
+  const tools = meta.tool_used?.split(" → ") || [];
+  const categories = meta.category?.split(" → ") || [];
+
+  return (
+    <>
+      {/* Toggle button - always visible */}
+      <button
+        onClick={onToggle}
+        data-testid="sidebar-toggle"
+        className="fixed top-4 right-4 z-50 p-2 rounded-sm bg-[#121214] border border-white/10 text-zinc-400 hover:text-white hover:border-white/20 transition-all duration-200"
+        title={isOpen ? "Close execution panel" : "View execution plan"}
+      >
+        {isOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+      </button>
+
+      {/* Sidebar panel */}
+      <div
+        data-testid="tool-sidebar"
+        className={`fixed top-0 right-0 h-full w-80 bg-[#0C0C0E] border-l border-white/[0.06] z-40 transition-transform duration-300 ease-out ${
+          isOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="h-full overflow-y-auto p-5 pt-16">
+          <div className="mb-6">
+            <h3 className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-600 mb-1">Execution Plan</h3>
+            <p className="text-xs text-zinc-500">
+              {tools.length > 1 ? `${tools.length}-step pipeline` : "Single-step execution"}
+            </p>
+          </div>
+
+          {/* Execution steps */}
+          <div className="space-y-1" data-testid="execution-steps">
+            {tools.map((tool, idx) => {
+              const ToolIcon = TOOL_ICONS[tool] || CircleDot;
+              const label = TOOL_LABELS[tool] || tool;
+              const category = categories[idx] || "general";
+              const catLabel = CATEGORY_LABELS[category] || category;
+
+              return (
+                <div key={idx}>
+                  {/* Step card */}
+                  <div
+                    className="p-3 rounded-sm border border-white/[0.06] bg-[#121214] hover:border-white/10 transition-colors"
+                    data-testid={`execution-step-${idx}`}
+                  >
+                    <div className="flex items-center gap-2.5 mb-2">
+                      <div className="w-6 h-6 rounded-sm bg-amber-400/10 border border-amber-400/20 flex items-center justify-center flex-shrink-0">
+                        <span className="font-mono text-[10px] text-amber-400 font-medium">{idx + 1}</span>
+                      </div>
+                      <span className="text-sm text-white font-medium truncate">{label}</span>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-green-500 ml-auto flex-shrink-0" />
+                    </div>
+
+                    <div className="ml-8 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <ToolIcon className="w-3 h-3 text-[#FF5500]" />
+                        <span className="font-mono text-[10px] text-[#FF5500] uppercase tracking-wider">{tool}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <FolderOpen className="w-3 h-3 text-[#00C2FF]" />
+                        <span className="font-mono text-[10px] text-[#00C2FF] uppercase tracking-wider">{catLabel}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Arrow connector between steps */}
+                  {idx < tools.length - 1 && (
+                    <div className="flex justify-center py-1">
+                      <ChevronRight className="w-3.5 h-3.5 text-zinc-700 rotate-90" />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Model & routing info */}
+          <Separator className="my-5 bg-white/[0.06]" />
+          <div className="space-y-3">
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-600 block mb-1">Model</span>
+              <div className="flex items-center gap-1.5">
+                <Brain className="w-3 h-3 text-zinc-400" />
+                <span className="font-mono text-xs text-zinc-300">{meta.model_used}</span>
+              </div>
+            </div>
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-600 block mb-1">Complexity</span>
+              <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-wider border-white/10 text-zinc-400">
+                {meta.complexity}
+              </Badge>
+            </div>
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-600 block mb-1">Routing</span>
+              <span className="font-mono text-xs text-zinc-400">{meta.routing_source || "local"}</span>
+            </div>
+          </div>
+
+          {/* History of all responses */}
+          {assistantMessages.length > 1 && (
+            <>
+              <Separator className="my-5 bg-white/[0.06]" />
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-600 block mb-3">Previous Executions</span>
+                <div className="space-y-2">
+                  {assistantMessages.slice(0, -1).reverse().map((msg, idx) => {
+                    const t = msg.metadata?.tool_used?.split(" → ") || ["none"];
+                    return (
+                      <div
+                        key={idx}
+                        className="p-2 rounded-sm border border-white/[0.04] bg-white/[0.02] text-xs"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <Wrench className="w-3 h-3 text-zinc-600" />
+                          <span className="font-mono text-[10px] text-zinc-500 uppercase truncate">
+                            {t.join(" → ")}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -155,6 +362,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -168,6 +376,8 @@ export default function App() {
     scrollToBottom();
   }, [messages, isLoading, scrollToBottom]);
 
+  // Ref not needed for sidebar auto-open (handled in sendMessage)
+
   const sendMessage = async (text) => {
     const userMsg = text || input.trim();
     if (!userMsg || isLoading) return;
@@ -178,6 +388,10 @@ export default function App() {
 
     try {
       const { data } = await axios.post(`${API}/chat`, { message: userMsg });
+      const toolsUsed = data.metadata?.tool_used?.split(" → ") || [];
+      if (toolsUsed.length > 1) {
+        setSidebarOpen(true);
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -214,6 +428,8 @@ export default function App() {
     sendMessage(prompt);
   };
 
+  const hasMessages = messages.some((m) => m.role === "assistant" && m.metadata);
+
   return (
     <div className="h-screen flex flex-col bg-[#09090B]">
       {/* Header */}
@@ -232,7 +448,7 @@ export default function App() {
       <div className="flex-1 overflow-hidden" data-testid={CHAT.thread}>
         <div
           ref={scrollRef}
-          className="h-full overflow-y-auto"
+          className={`h-full overflow-y-auto transition-all duration-300 ${sidebarOpen ? "mr-80" : ""}`}
           data-testid={CHAT.messageList}
         >
           <div className="max-w-4xl mx-auto w-full px-4 sm:px-8 pb-48 pt-8">
@@ -260,10 +476,18 @@ export default function App() {
         </div>
       </div>
 
+      {/* Tool Execution Sidebar */}
+      {hasMessages && (
+        <ToolSidebar
+          messages={messages}
+          isOpen={sidebarOpen}
+          onToggle={() => setSidebarOpen(!sidebarOpen)}
+        />
+      )}
+
       {/* Input Bar */}
-      <div className="input-bar-glass border-t border-white/[0.06] p-4 sm:p-6" data-testid={CHAT.inputBar}>
+      <div className={`input-bar-glass border-t border-white/[0.06] p-4 sm:p-6 transition-all duration-300 ${sidebarOpen ? "mr-80" : ""}`} data-testid={CHAT.inputBar}>
         <div className="max-w-4xl mx-auto w-full">
-          {/* Quick actions above input when conversation started */}
           {messages.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-3">
               {QUICK_ACTIONS.slice(0, 3).map((action, idx) => (
@@ -281,7 +505,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Input container */}
           <div className="input-container-focus flex items-center gap-2 bg-[#121214] border border-white/[0.08] rounded-sm px-4 py-2.5">
             <Sparkles className="w-4 h-4 text-zinc-600 flex-shrink-0" />
             <input
