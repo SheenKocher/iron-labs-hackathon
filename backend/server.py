@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from mock_data import PROSPECTS, DEALS, LEADS_BY_INDUSTRY
 from mcp_tools import generate_cold_email, review_email, lookup_prospect, get_deal_notes, find_similar_leads
+from ironlabs_router import ironlabs_model_select
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -49,6 +50,7 @@ class MetadataResponse(BaseModel):
     tool_used: str
     category: str
     complexity: str
+    routing_source: str = "local"
 
 class EmailDraft(BaseModel):
     subject: str
@@ -257,11 +259,28 @@ async def chat(request: ChatRequest):
     complexity = classification["complexity"]
     logger.info(f"Classification: category={category}, complexity={complexity}")
 
-    # Step 2: Get routing decision
+    # Step 2: Get routing decision (try IronLabs first, fall back to local)
     route = get_route(category, complexity)
     tool_name = route["tool"]
     model = route["model"]
-    logger.info(f"Routing: tool={tool_name}, model={model}")
+    routing_source = "local"
+
+    # Try IronLabs intelligent routing for model selection
+    ironlabs_result = await ironlabs_model_select(
+        messages=[{"role": "user", "content": user_message}],
+        models=[
+            {"provider": "openai", "model": FAST_MODEL},
+            {"provider": "openai", "model": STRONG_MODEL},
+        ],
+        tradeoff="performance",
+    )
+    if ironlabs_result:
+        model = ironlabs_result["model"]
+        routing_source = "ironlabs"
+        logger.info(f"IronLabs routing selected model: {model}")
+    else:
+        logger.info(f"Using local routing: tool={tool_name}, model={model}")
+    logger.info(f"Routing [{routing_source}]: tool={tool_name}, model={model}")
 
     # Step 3: Execute tool if needed
     tool_output = {"type": "none", "data": None}
@@ -314,7 +333,8 @@ async def chat(request: ChatRequest):
             model_used=model,
             tool_used=tool_name,
             category=category,
-            complexity=complexity
+            complexity=complexity,
+            routing_source=routing_source
         ),
         email_draft=email_draft
     )
