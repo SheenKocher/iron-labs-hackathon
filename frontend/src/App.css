@@ -1,34 +1,105 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* PitchRoute - Custom styles */
+
+.font-heading {
+  font-family: 'Chivo', sans-serif;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+.font-body {
+  font-family: 'IBM Plex Sans', sans-serif;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
 }
 
-.App-link {
-    color: #61dafb;
+/* Glassmorphic input bar */
+.input-bar-glass {
+  background: rgba(9, 9, 11, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+/* Focus glow on input container */
+.input-container-focus {
+  transition: box-shadow 0.2s ease-out, border-color 0.2s ease-out;
+}
+
+.input-container-focus:focus-within {
+  box-shadow: 0 0 0 1px rgba(255, 204, 0, 0.3), 0 0 20px rgba(255, 204, 0, 0.05);
+  border-color: rgba(255, 204, 0, 0.3);
+}
+
+/* Email draft card */
+.email-card {
+  background: #121214;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Badge styles */
+.badge-model {
+  background: rgba(255, 255, 255, 0.05);
+  color: #A1A1AA;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.badge-tool {
+  background: rgba(255, 85, 0, 0.1);
+  color: #FF5500;
+  border: 1px solid rgba(255, 85, 0, 0.2);
+}
+
+.badge-category {
+  background: rgba(0, 194, 255, 0.1);
+  color: #00C2FF;
+  border: 1px solid rgba(0, 194, 255, 0.2);
+}
+
+/* Quick action chips */
+.quick-chip {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #71717A;
+  transition: all 0.2s ease-out;
+}
+
+.quick-chip:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #FFFFFF;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Markdown-like response formatting */
+.ai-response-content h1,
+.ai-response-content h2,
+.ai-response-content h3 {
+  font-family: 'Chivo', sans-serif;
+  font-weight: 500;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.ai-response-content ul,
+.ai-response-content ol {
+  padding-left: 1.25em;
+  margin: 0.5em 0;
+}
+
+.ai-response-content li {
+  margin: 0.25em 0;
+}
+
+.ai-response-content p {
+  margin: 0.5em 0;
+}
+
+.ai-response-content strong {
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+.ai-response-content code {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.15em 0.4em;
+  border-radius: 2px;
+  font-size: 0.875em;
 }
