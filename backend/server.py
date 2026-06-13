@@ -1,8 +1,10 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+import asyncio
 import os
 import json
 import uuid
@@ -452,6 +454,176 @@ async def chat(request: ChatRequest):
             routing_source=routing_source
         ),
         email_draft=email_draft
+    )
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    """Format a Server-Sent Event."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+@api_router.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """SSE streaming chat endpoint with real-time step progress."""
+    user_message = request.message.strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    async def event_generator():
+        # --- Planning phase ---
+        yield _sse_event("planning", {"status": "Analyzing request..."})
+
+        plan = await plan_request(user_message)
+        steps = plan["steps"]
+        complexity = plan["complexity"]
+
+        step_summaries = [
+            {"tool": PLAN_TO_TOOL.get(s.get("tool", "none"), "none"),
+             "category": TOOL_TO_CATEGORY.get(s.get("tool", "none"), "general"),
+             "reason": s.get("reason", "")}
+            for s in steps
+        ]
+
+        yield _sse_event("plan", {
+            "steps": step_summaries,
+            "complexity": complexity,
+            "total_steps": len(steps),
+        })
+
+        # --- Model routing ---
+        model = STRONG_MODEL if complexity == "high" else FAST_MODEL
+        routing_source = "local"
+
+        ironlabs_result = await ironlabs_model_select(
+            messages=[{"role": "user", "content": user_message}],
+            models=[
+                {"provider": "openai", "model": FAST_MODEL},
+                {"provider": "openai", "model": STRONG_MODEL},
+            ],
+            tradeoff="performance",
+        )
+        if ironlabs_result:
+            model = ironlabs_result["model"]
+            routing_source = "ironlabs"
+
+        # --- Execute tool steps ---
+        all_tool_outputs = []
+        tools_used = []
+        categories = []
+        accumulated_context = ""
+
+        for idx, step in enumerate(steps):
+            raw_tool = step.get("tool", "none")
+            tool_name = PLAN_TO_TOOL.get(raw_tool, "none")
+            category = TOOL_TO_CATEGORY.get(raw_tool, "general")
+            categories.append(category)
+
+            if tool_name == "none":
+                tools_used.append("none")
+                yield _sse_event("step_start", {
+                    "step": idx, "tool": "none", "category": category,
+                    "reason": step.get("reason", "General response"),
+                })
+                yield _sse_event("step_complete", {"step": idx, "tool": "none", "status": "skipped"})
+                continue
+
+            tools_used.append(tool_name)
+
+            yield _sse_event("step_start", {
+                "step": idx, "tool": tool_name, "category": category,
+                "reason": step.get("reason", ""),
+            })
+
+            enriched_message = user_message
+            if accumulated_context:
+                enriched_message = f"{user_message}\n\n--- Context from previous steps ---\n{accumulated_context}"
+
+            step_model = model
+            if tool_name == "generate_cold_email" and accumulated_context:
+                step_model = STRONG_MODEL
+            elif tool_name == "review_email":
+                step_model = STRONG_MODEL
+
+            try:
+                tool_output = await execute_tool(tool_name, step_model, enriched_message)
+                all_tool_outputs.append(tool_output)
+
+                if tool_output["type"] == "deal_data" and isinstance(tool_output["data"], dict):
+                    accumulated_context += f"\nDeal info: {json.dumps(tool_output['data'], indent=2)}"
+                elif tool_output["type"] == "prospect_data" and isinstance(tool_output["data"], dict):
+                    accumulated_context += f"\nProspect info: {json.dumps(tool_output['data'], indent=2)}"
+                elif tool_output["type"] == "lead_list" and isinstance(tool_output["data"], list):
+                    accumulated_context += f"\nLead list: {json.dumps(tool_output['data'], indent=2)}"
+                elif tool_output["type"] == "email_draft" and isinstance(tool_output["data"], dict):
+                    accumulated_context += f"\nEmail draft — Subject: {tool_output['data'].get('subject', '')}\nBody: {tool_output['data'].get('body', '')}"
+                elif tool_output["type"] == "email_review" and isinstance(tool_output["data"], dict):
+                    accumulated_context += f"\nEmail review — Score: {tool_output['data'].get('score', 'N/A')}, Suggestions: {json.dumps(tool_output['data'].get('suggestions', []))}"
+
+                yield _sse_event("step_complete", {"step": idx, "tool": tool_name, "status": "done"})
+
+            except Exception as e:
+                logger.error(f"Tool execution error ({tool_name}): {e}")
+                all_tool_outputs.append({"type": "error", "data": str(e)})
+                yield _sse_event("step_complete", {"step": idx, "tool": tool_name, "status": "error", "error": str(e)})
+
+        # --- Final response generation ---
+        yield _sse_event("generating", {"status": "Synthesizing final response..."})
+
+        combined_output = {"type": "none", "data": None}
+        if len(all_tool_outputs) == 1:
+            combined_output = all_tool_outputs[0]
+        elif len(all_tool_outputs) > 1:
+            combined_output = {"type": "multi_step", "data": all_tool_outputs, "accumulated_context": accumulated_context}
+
+        primary_category = categories[-1] if categories else "general"
+        final_model = STRONG_MODEL if len(steps) > 1 else model
+
+        try:
+            response_text = await generate_final_response(final_model, user_message, combined_output, primary_category)
+        except Exception as e:
+            response_text = f"Error generating response: {str(e)}"
+
+        # Build email_draft
+        email_draft_data = None
+        for tool_output in reversed(all_tool_outputs):
+            if tool_output.get("type") == "email_draft" and isinstance(tool_output.get("data"), dict):
+                email_draft_data = {"subject": tool_output["data"].get("subject", ""), "body": tool_output["data"].get("body", "")}
+                break
+            elif tool_output.get("type") == "email_review" and isinstance(tool_output.get("data"), dict):
+                improved = tool_output["data"].get("improved_draft")
+                if improved:
+                    email_draft_data = {"subject": "Re: Improved Draft", "body": improved}
+                    break
+
+        tools_str = " → ".join(tools_used) if tools_used else "none"
+        categories_str = " → ".join(categories) if categories else "general"
+
+        # Save to DB
+        try:
+            await db.conversations.insert_one({
+                "user_message": user_message, "ai_response": response_text,
+                "category": categories_str, "complexity": complexity,
+                "tool_used": tools_str, "model_used": final_model,
+                "steps": len(steps), "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+        except Exception as e:
+            logger.error(f"DB save error: {e}")
+
+        # Final done event with full payload
+        yield _sse_event("done", {
+            "response": response_text,
+            "metadata": {
+                "model_used": final_model, "tool_used": tools_str,
+                "category": categories_str, "complexity": complexity,
+                "routing_source": routing_source,
+            },
+            "email_draft": email_draft_data,
+        })
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
