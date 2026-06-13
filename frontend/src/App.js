@@ -5,6 +5,7 @@ import { CHAT } from "@/constants/testIds";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import ReactMarkdown from "react-markdown";
 import {
   Send,
   Mail,
@@ -110,8 +111,8 @@ function AIResponse({ content, metadata, emailDraft }) {
   return (
     <div className="animate-slide-up" data-testid={CHAT.aiResponse}>
       <MetadataBadges metadata={metadata} />
-      <div className="ai-response-content text-sm sm:text-base leading-relaxed text-zinc-300 whitespace-pre-wrap">
-        {content}
+      <div className="ai-response-content text-sm sm:text-base leading-relaxed text-zinc-300">
+        <ReactMarkdown>{content}</ReactMarkdown>
       </div>
       <EmailDraftCard emailDraft={emailDraft} />
     </div>
