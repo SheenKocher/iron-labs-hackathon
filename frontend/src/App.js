@@ -100,11 +100,16 @@ function EmailDraftCard({ emailDraft }) {
 
   const handleSendGmail = () => {
     const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=&su=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
-    const w = window.open(gmailUrl, "_blank", "noopener,noreferrer");
-    if (!w) {
-      navigator.clipboard.writeText(gmailUrl);
-      alert("Pop-up blocked. Gmail URL copied to clipboard — paste it in a new tab.");
+    navigator.clipboard.writeText(gmailUrl).catch(() => {});
+    try {
+      (window.top || window).open(gmailUrl, "_blank");
+    } catch (e) {
+      window.location.href = `mailto:?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
     }
+  };
+
+  const handleMailto = () => {
+    window.location.href = `mailto:?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
   };
 
   const handleCopyDraft = () => {
@@ -128,10 +133,14 @@ function EmailDraftCard({ emailDraft }) {
         <span className="text-xs text-zinc-500 font-mono uppercase tracking-wider">Body</span>
         <p className="text-sm text-zinc-300 mt-1 whitespace-pre-wrap leading-relaxed">{emailDraft.body}</p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button onClick={handleSendGmail} data-testid={CHAT.sendGmailButton}
           className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-sm border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-all duration-200">
-          <ExternalLink className="w-3.5 h-3.5" /> Send via Gmail
+          <ExternalLink className="w-3.5 h-3.5" /> Open in Gmail
+        </button>
+        <button onClick={handleMailto} data-testid="mailto-button"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-sm border border-white/10 text-zinc-400 hover:bg-white/5 transition-all duration-200">
+          <Mail className="w-3.5 h-3.5" /> Open in Mail App
         </button>
         <button onClick={handleCopyDraft} data-testid="copy-draft-button"
           className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-sm border border-white/10 text-zinc-400 hover:bg-white/5 transition-all duration-200">
@@ -406,16 +415,23 @@ export default function App() {
     if (!userMsg || isLoading) return;
 
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+    const updatedMessages = [...messages, { role: "user", content: userMsg }];
+    setMessages(updatedMessages);
     setIsLoading(true);
     setLiveSteps([]);
     setLiveStatus("Analyzing request...");
+
+    // Build history from current messages (last 10 messages for context)
+    const history = updatedMessages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-10)
+      .map((m) => ({ role: m.role, content: m.content?.slice(0, 500) || "" }));
 
     try {
       const response = await fetch(`${API}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({ message: userMsg, history }),
       });
 
       if (!response.ok) {

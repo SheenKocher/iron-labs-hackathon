@@ -44,8 +44,13 @@ logger = logging.getLogger(__name__)
 
 # --- Pydantic Models ---
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class ChatRequest(BaseModel):
     message: str
+    history: list[ChatMessage] = []
 
 class MetadataResponse(BaseModel):
     model_used: str
@@ -92,16 +97,25 @@ Respond ONLY with JSON:
 For simple single-tool requests, just return one step. For general questions with no tool, use [{"tool": "none", "reason": "..."}]."""
 
 
-async def plan_request(message: str) -> dict:
+async def plan_request(message: str, history: list = None) -> dict:
     """Plan the execution steps for a user request."""
     try:
+        # Build context from conversation history
+        context_msg = message
+        if history:
+            history_text = "\n".join(
+                f"{'User' if m.role == 'user' else 'Assistant'}: {m.content[:200]}"
+                for m in history[-6:]  # last 3 exchanges
+            )
+            context_msg = f"Conversation so far:\n{history_text}\n\nLatest user message: {message}"
+
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=str(uuid.uuid4()),
             system_message=CLASSIFICATION_PROMPT,
         ).with_model("openai", FAST_MODEL)
 
-        content = await chat.send_message(UserMessage(text=message))
+        content = await chat.send_message(UserMessage(text=context_msg))
         content = content.strip()
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
@@ -238,11 +252,21 @@ async def execute_tool(tool_name: str, model: str, user_message: str) -> dict:
 
 # --- Final Response Generation ---
 
-async def generate_final_response(model: str, user_message: str, tool_output: dict, category: str) -> str:
-    """Generate the final response using the selected model, incorporating tool output."""
-    system_prompt = "You are PitchRoute, an expert AI sales assistant. You help sales reps with cold emails, email reviews, prospect research, deal tracking, and lead generation. Be concise, actionable, and professional. Use bullet points where appropriate."
+async def generate_final_response(model: str, user_message: str, tool_output: dict, category: str, history: list = None) -> str:
+    """Generate the final response using the selected model, incorporating tool output and conversation history."""
+    system_prompt = "You are PitchRoute, an expert AI sales assistant. You help sales reps with cold emails, email reviews, prospect research, deal tracking, and lead generation. Be concise, actionable, and professional. Use bullet points where appropriate. You have memory of the current conversation — reference previous messages when relevant."
 
-    context_parts = [f"User request: {user_message}"]
+    context_parts = []
+
+    # Include conversation history for context
+    if history:
+        context_parts.append("--- Previous conversation ---")
+        for m in history[-6:]:
+            role = "User" if m.role == "user" else "PitchRoute"
+            context_parts.append(f"{role}: {m.content[:300]}")
+        context_parts.append("--- End of history ---\n")
+
+    context_parts.append(f"User request: {user_message}")
 
     def append_tool_context(output):
         if output["type"] == "email_draft":
@@ -252,8 +276,11 @@ async def generate_final_response(model: str, user_message: str, tool_output: di
         elif output["type"] == "email_review":
             data = output["data"]
             context_parts.append(f"\nEmail review results:\nScore: {data.get('score', 'N/A')}/10\nSuggestions: {json.dumps(data.get('suggestions', []))}")
-            if data.get("improved_draft"):
-                context_parts.append(f"\nImproved draft: {data['improved_draft']}")
+            improved = data.get("improved_draft")
+            if isinstance(improved, dict):
+                context_parts.append(f"\nImproved draft:\nSubject: {improved.get('subject', '')}\nBody: {improved.get('body', '')}")
+            elif improved:
+                context_parts.append(f"\nImproved draft: {improved}")
             context_parts.append("\nPresent the review feedback clearly with the score, suggestions, and improved version.")
         elif output["type"] == "prospect_data":
             data = output["data"]
@@ -308,8 +335,10 @@ async def chat(request: ChatRequest):
     if not user_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    history = request.history or []
+
     # Step 1: Plan the request (may produce multiple steps)
-    plan = await plan_request(user_message)
+    plan = await plan_request(user_message, history)
     steps = plan["steps"]
     complexity = plan["complexity"]
     logger.info(f"Plan: {len(steps)} step(s), complexity={complexity}")
@@ -404,7 +433,8 @@ async def chat(request: ChatRequest):
             STRONG_MODEL if len(steps) > 1 else model,
             user_message,
             combined_output,
-            primary_category
+            primary_category,
+            history
         )
     except Exception as e:
         logger.error(f"Response generation error: {e}")
@@ -421,8 +451,11 @@ async def chat(request: ChatRequest):
             break
         elif tool_output.get("type") == "email_review" and isinstance(tool_output.get("data"), dict):
             improved = tool_output["data"].get("improved_draft")
-            if improved:
-                email_draft = EmailDraft(subject="Re: Improved Draft", body=improved)
+            if isinstance(improved, dict):
+                email_draft = EmailDraft(subject=improved.get("subject", "Improved Draft"), body=improved.get("body", ""))
+                break
+            elif improved:
+                email_draft = EmailDraft(subject="Re: Improved Draft", body=str(improved))
                 break
 
     # Tools/categories summary for metadata
@@ -469,11 +502,13 @@ async def chat_stream(request: ChatRequest):
     if not user_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    history = request.history or []
+
     async def event_generator():
         # --- Planning phase ---
         yield _sse_event("planning", {"status": "Analyzing request..."})
 
-        plan = await plan_request(user_message)
+        plan = await plan_request(user_message, history)
         steps = plan["steps"]
         complexity = plan["complexity"]
 
@@ -579,7 +614,7 @@ async def chat_stream(request: ChatRequest):
         final_model = STRONG_MODEL if len(steps) > 1 else model
 
         try:
-            response_text = await generate_final_response(final_model, user_message, combined_output, primary_category)
+            response_text = await generate_final_response(final_model, user_message, combined_output, primary_category, history)
         except Exception as e:
             response_text = f"Error generating response: {str(e)}"
 
@@ -591,8 +626,11 @@ async def chat_stream(request: ChatRequest):
                 break
             elif tool_output.get("type") == "email_review" and isinstance(tool_output.get("data"), dict):
                 improved = tool_output["data"].get("improved_draft")
-                if improved:
-                    email_draft_data = {"subject": "Re: Improved Draft", "body": improved}
+                if isinstance(improved, dict):
+                    email_draft_data = {"subject": improved.get("subject", "Improved Draft"), "body": improved.get("body", "")}
+                    break
+                elif improved:
+                    email_draft_data = {"subject": "Re: Improved Draft", "body": str(improved)}
                     break
 
         tools_str = " → ".join(tools_used) if tools_used else "none"
