@@ -62,24 +62,36 @@ class ChatResponse(BaseModel):
     email_draft: Optional[EmailDraft] = None
 
 
-# --- Classification ---
+# --- Classification & Planning ---
 
-CLASSIFICATION_PROMPT = """You are a request classifier for a sales assistant.
-Classify the user's message into exactly one category:
-- cold_email_draft
-- email_review
-- prospect_lookup
-- deal_lookup
-- lead_gen
-- general
+CLASSIFICATION_PROMPT = """You are a request planner for a sales assistant. Analyze the user's message and create an execution plan.
 
-Also rate complexity as "low", "medium", or "high".
+Available tools:
+- cold_email_draft: Draft a cold outreach email
+- email_review: Review/improve an email draft
+- prospect_lookup: Look up prospect info by name
+- deal_lookup: Look up deal info by deal ID
+- lead_gen: Find similar leads by industry
+- none: General question, no tool needed
 
-Respond ONLY with JSON: {"category": "...", "complexity": "..."}"""
+If the request requires MULTIPLE steps (e.g. "look up deal D-1042 then draft an email about it"), list ALL steps in order.
+
+Rate overall complexity as "low", "medium", or "high".
+
+Respond ONLY with JSON:
+{
+  "steps": [
+    {"tool": "deal_lookup", "reason": "Fetch deal D-1042 details"},
+    {"tool": "cold_email_draft", "reason": "Draft email using deal context"}
+  ],
+  "complexity": "medium"
+}
+
+For simple single-tool requests, just return one step. For general questions with no tool, use [{"tool": "none", "reason": "..."}]."""
 
 
-async def classify_request(message: str) -> dict:
-    """Classify a user request using the fast model."""
+async def plan_request(message: str) -> dict:
+    """Plan the execution steps for a user request."""
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
@@ -94,13 +106,47 @@ async def classify_request(message: str) -> dict:
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
         result = json.loads(content)
+        steps = result.get("steps", [])
+        if not steps:
+            steps = [{"tool": "none", "reason": "general"}]
         return {
-            "category": result.get("category", "general"),
+            "steps": steps,
             "complexity": result.get("complexity", "low")
         }
     except Exception as e:
-        logger.error(f"Classification error: {e}")
-        return {"category": "general", "complexity": "low"}
+        logger.error(f"Planning error: {e}")
+        return {"steps": [{"tool": "none", "reason": "fallback"}], "complexity": "low"}
+
+
+# Map tool names to categories for metadata
+TOOL_TO_CATEGORY = {
+    "generate_cold_email": "cold_email_draft",
+    "cold_email_draft": "cold_email_draft",
+    "review_email": "email_review",
+    "email_review": "email_review",
+    "lookup_prospect": "prospect_lookup",
+    "prospect_lookup": "prospect_lookup",
+    "get_deal_notes": "deal_lookup",
+    "deal_lookup": "deal_lookup",
+    "find_similar_leads": "lead_gen",
+    "lead_gen": "lead_gen",
+    "none": "general",
+}
+
+# Map plan tool names to actual function tool names
+PLAN_TO_TOOL = {
+    "cold_email_draft": "generate_cold_email",
+    "email_review": "review_email",
+    "prospect_lookup": "lookup_prospect",
+    "deal_lookup": "get_deal_notes",
+    "lead_gen": "find_similar_leads",
+    "generate_cold_email": "generate_cold_email",
+    "review_email": "review_email",
+    "lookup_prospect": "lookup_prospect",
+    "get_deal_notes": "get_deal_notes",
+    "find_similar_leads": "find_similar_leads",
+    "none": "none",
+}
 
 
 # --- Routing Table ---
@@ -196,32 +242,39 @@ async def generate_final_response(model: str, user_message: str, tool_output: di
 
     context_parts = [f"User request: {user_message}"]
 
-    if tool_output["type"] == "email_draft":
-        data = tool_output["data"]
-        context_parts.append(f"\nGenerated email draft:\nSubject: {data.get('subject', '')}\nBody: {data.get('body', '')}")
-        context_parts.append("\nPresent this email draft to the user. Briefly explain why you chose this approach.")
+    def append_tool_context(output):
+        if output["type"] == "email_draft":
+            data = output["data"]
+            context_parts.append(f"\nGenerated email draft:\nSubject: {data.get('subject', '')}\nBody: {data.get('body', '')}")
+            context_parts.append("\nPresent this email draft to the user. Briefly explain why you chose this approach.")
+        elif output["type"] == "email_review":
+            data = output["data"]
+            context_parts.append(f"\nEmail review results:\nScore: {data.get('score', 'N/A')}/10\nSuggestions: {json.dumps(data.get('suggestions', []))}")
+            if data.get("improved_draft"):
+                context_parts.append(f"\nImproved draft: {data['improved_draft']}")
+            context_parts.append("\nPresent the review feedback clearly with the score, suggestions, and improved version.")
+        elif output["type"] == "prospect_data":
+            data = output["data"]
+            context_parts.append(f"\nProspect data found:\n{json.dumps(data, indent=2)}")
+            context_parts.append("\nSummarize this prospect info and suggest next steps for the rep.")
+        elif output["type"] == "deal_data":
+            data = output["data"]
+            context_parts.append(f"\nDeal data found:\n{json.dumps(data, indent=2)}")
+            context_parts.append("\nSummarize the deal status and suggest actions based on the current stage.")
+        elif output["type"] == "lead_list":
+            data = output["data"]
+            context_parts.append(f"\nSimilar leads found:\n{json.dumps(data, indent=2)}")
+            context_parts.append("\nPresent these leads in a clear format and suggest outreach priorities.")
 
-    elif tool_output["type"] == "email_review":
-        data = tool_output["data"]
-        context_parts.append(f"\nEmail review results:\nScore: {data.get('score', 'N/A')}/10\nSuggestions: {json.dumps(data.get('suggestions', []))}")
-        if data.get("improved_draft"):
-            context_parts.append(f"\nImproved draft: {data['improved_draft']}")
-        context_parts.append("\nPresent the review feedback clearly with the score, suggestions, and improved version.")
-
-    elif tool_output["type"] == "prospect_data":
-        data = tool_output["data"]
-        context_parts.append(f"\nProspect data found:\n{json.dumps(data, indent=2)}")
-        context_parts.append("\nSummarize this prospect info and suggest next steps for the rep.")
-
-    elif tool_output["type"] == "deal_data":
-        data = tool_output["data"]
-        context_parts.append(f"\nDeal data found:\n{json.dumps(data, indent=2)}")
-        context_parts.append("\nSummarize the deal status and suggest actions based on the current stage.")
-
-    elif tool_output["type"] == "lead_list":
-        data = tool_output["data"]
-        context_parts.append(f"\nSimilar leads found:\n{json.dumps(data, indent=2)}")
-        context_parts.append("\nPresent these leads in a clear format and suggest outreach priorities.")
+    if tool_output["type"] == "multi_step":
+        # Multi-step: append context from all tool outputs
+        context_parts.append("\n--- Multi-step execution results ---")
+        for i, step_output in enumerate(tool_output["data"]):
+            context_parts.append(f"\n[Step {i+1}]")
+            append_tool_context(step_output)
+        context_parts.append("\nSynthesize ALL the above results into a cohesive response that addresses the user's full request. If there's an email draft, present it clearly.")
+    else:
+        append_tool_context(tool_output)
 
     full_context = "\n".join(context_parts)
 
@@ -248,21 +301,21 @@ async def root():
 
 @api_router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Main chat endpoint that processes user requests through the routing pipeline."""
+    """Main chat endpoint with multi-step planning support."""
     user_message = request.message.strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Step 1: Classify the request
-    classification = await classify_request(user_message)
-    category = classification["category"]
-    complexity = classification["complexity"]
-    logger.info(f"Classification: category={category}, complexity={complexity}")
+    # Step 1: Plan the request (may produce multiple steps)
+    plan = await plan_request(user_message)
+    steps = plan["steps"]
+    complexity = plan["complexity"]
+    logger.info(f"Plan: {len(steps)} step(s), complexity={complexity}")
+    for i, s in enumerate(steps):
+        logger.info(f"  Step {i+1}: {s['tool']} — {s.get('reason', '')}")
 
-    # Step 2: Get routing decision (try IronLabs first, fall back to local)
-    route = get_route(category, complexity)
-    tool_name = route["tool"]
-    model = route["model"]
+    # Determine model tier based on complexity
+    model = STRONG_MODEL if complexity == "high" else FAST_MODEL
     routing_source = "local"
 
     # Try IronLabs intelligent routing for model selection
@@ -278,50 +331,112 @@ async def chat(request: ChatRequest):
         model = ironlabs_result["model"]
         routing_source = "ironlabs"
         logger.info(f"IronLabs routing selected model: {model}")
-    else:
-        logger.info(f"Using local routing: tool={tool_name}, model={model}")
-    logger.info(f"Routing [{routing_source}]: tool={tool_name}, model={model}")
 
-    # Step 3: Execute tool if needed
-    tool_output = {"type": "none", "data": None}
-    if tool_name != "none":
+    # Step 2: Execute all tool steps sequentially, accumulating context
+    all_tool_outputs = []
+    tools_used = []
+    categories = []
+    accumulated_context = ""
+
+    for step in steps:
+        raw_tool = step.get("tool", "none")
+        tool_name = PLAN_TO_TOOL.get(raw_tool, "none")
+        category = TOOL_TO_CATEGORY.get(raw_tool, "general")
+        categories.append(category)
+
+        if tool_name == "none":
+            tools_used.append("none")
+            continue
+
+        tools_used.append(tool_name)
+
+        # For subsequent steps, enrich the message with accumulated context
+        enriched_message = user_message
+        if accumulated_context:
+            enriched_message = f"{user_message}\n\n--- Context from previous steps ---\n{accumulated_context}"
+
+        # Use strong model for email drafting when it follows a data lookup
+        step_model = model
+        if tool_name == "generate_cold_email" and accumulated_context:
+            step_model = STRONG_MODEL
+        elif tool_name == "review_email":
+            step_model = STRONG_MODEL
+
         try:
-            tool_output = await execute_tool(tool_name, model, user_message)
-        except Exception as e:
-            logger.error(f"Tool execution error: {e}")
-            tool_output = {"type": "error", "data": str(e)}
+            tool_output = await execute_tool(tool_name, step_model, enriched_message)
+            all_tool_outputs.append(tool_output)
 
-    # Step 4: Generate final response
+            # Build accumulated context from this tool's output
+            if tool_output["type"] == "deal_data" and isinstance(tool_output["data"], dict):
+                accumulated_context += f"\nDeal info: {json.dumps(tool_output['data'], indent=2)}"
+            elif tool_output["type"] == "prospect_data" and isinstance(tool_output["data"], dict):
+                accumulated_context += f"\nProspect info: {json.dumps(tool_output['data'], indent=2)}"
+            elif tool_output["type"] == "lead_list" and isinstance(tool_output["data"], list):
+                accumulated_context += f"\nLead list: {json.dumps(tool_output['data'], indent=2)}"
+            elif tool_output["type"] == "email_draft" and isinstance(tool_output["data"], dict):
+                accumulated_context += f"\nEmail draft — Subject: {tool_output['data'].get('subject', '')}\nBody: {tool_output['data'].get('body', '')}"
+            elif tool_output["type"] == "email_review" and isinstance(tool_output["data"], dict):
+                accumulated_context += f"\nEmail review — Score: {tool_output['data'].get('score', 'N/A')}, Suggestions: {json.dumps(tool_output['data'].get('suggestions', []))}"
+
+        except Exception as e:
+            logger.error(f"Tool execution error ({tool_name}): {e}")
+            all_tool_outputs.append({"type": "error", "data": str(e)})
+
+    # Step 3: Generate final response using all accumulated context
+    # Merge all tool outputs into a combined output for the final response
+    combined_output = {"type": "none", "data": None}
+    if len(all_tool_outputs) == 1:
+        combined_output = all_tool_outputs[0]
+    elif len(all_tool_outputs) > 1:
+        combined_output = {
+            "type": "multi_step",
+            "data": all_tool_outputs,
+            "accumulated_context": accumulated_context
+        }
+
+    # Determine the primary category (last meaningful one)
+    primary_category = categories[-1] if categories else "general"
+
     try:
-        response_text = await generate_final_response(model, user_message, tool_output, category)
+        response_text = await generate_final_response(
+            STRONG_MODEL if len(steps) > 1 else model,
+            user_message,
+            combined_output,
+            primary_category
+        )
     except Exception as e:
         logger.error(f"Response generation error: {e}")
         response_text = f"I encountered an issue processing your request. Error: {str(e)}"
 
-    # Build email_draft if applicable
+    # Build email_draft from the last email-producing tool output
     email_draft = None
-    if tool_output["type"] == "email_draft" and isinstance(tool_output["data"], dict):
-        email_draft = EmailDraft(
-            subject=tool_output["data"].get("subject", ""),
-            body=tool_output["data"].get("body", "")
-        )
-    elif tool_output["type"] == "email_review" and isinstance(tool_output["data"], dict):
-        improved = tool_output["data"].get("improved_draft")
-        if improved:
+    for tool_output in reversed(all_tool_outputs):
+        if tool_output.get("type") == "email_draft" and isinstance(tool_output.get("data"), dict):
             email_draft = EmailDraft(
-                subject="Re: Improved Draft",
-                body=improved
+                subject=tool_output["data"].get("subject", ""),
+                body=tool_output["data"].get("body", "")
             )
+            break
+        elif tool_output.get("type") == "email_review" and isinstance(tool_output.get("data"), dict):
+            improved = tool_output["data"].get("improved_draft")
+            if improved:
+                email_draft = EmailDraft(subject="Re: Improved Draft", body=improved)
+                break
+
+    # Tools/categories summary for metadata
+    tools_str = " → ".join(tools_used) if tools_used else "none"
+    categories_str = " → ".join(categories) if categories else "general"
 
     # Save conversation to DB
     try:
         await db.conversations.insert_one({
             "user_message": user_message,
             "ai_response": response_text,
-            "category": category,
+            "category": categories_str,
             "complexity": complexity,
-            "tool_used": tool_name,
+            "tool_used": tools_str,
             "model_used": model,
+            "steps": len(steps),
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
     except Exception as e:
@@ -330,9 +445,9 @@ async def chat(request: ChatRequest):
     return ChatResponse(
         response=response_text,
         metadata=MetadataResponse(
-            model_used=model,
-            tool_used=tool_name,
-            category=category,
+            model_used=STRONG_MODEL if len(steps) > 1 else model,
+            tool_used=tools_str,
+            category=categories_str,
             complexity=complexity,
             routing_source=routing_source
         ),
